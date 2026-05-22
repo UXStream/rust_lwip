@@ -54,6 +54,12 @@ impl NetStackImpl {
         stack
     }
 
+    pub fn set_mtu(&mut self, mtu: u16) {
+        unsafe {
+            (*netif_list).mtu = mtu;
+        }
+    }
+
     pub fn output(&mut self, pkt: Vec<u8>) {
         if self.tx.try_send(pkt).is_err() {
             // log::trace!("try send stack output pkt failed: {}", e);
