@@ -20,6 +20,10 @@ impl NetStack {
         ))
     }
 
+    pub fn set_mtu(&mut self, mtu: u16) {
+        self.0.set_mtu(mtu);
+    }
+
     pub fn with_buffer_size(
         stack_buffer_size: usize,
         udp_buffer_size: usize,

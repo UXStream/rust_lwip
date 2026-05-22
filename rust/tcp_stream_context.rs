@@ -9,6 +9,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use super::LWIPMutexGuard;
 
+
+#[allow(dead_code)] // remote_addr is currently unused
 pub struct TcpStreamContextInner {
     pub local_addr: SocketAddr,
     pub remote_addr: SocketAddr,
