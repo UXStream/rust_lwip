@@ -1,5 +1,6 @@
 use std::{
     env,
+    fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -90,6 +91,25 @@ fn generate_lwip_bindings() {
     // println!("cargo:rerun-if-changed=old-src/custom/wrapper.h");
     println!("cargo:include=old-src/include");
 
+    // On Windows Android builds, bindgen may fail to locate libclang unless
+    // LIBCLANG_PATH is explicitly set. Derive it from the configured NDK clang.
+    let host = env::var("HOST").unwrap_or_default();
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target = env::var("TARGET").unwrap_or_default();
+    let android_cc_env = format!("CC_{target}");
+    if host.contains("windows") && target_os == "android" {
+        if let Ok(cc_path) = env::var(&android_cc_env) {
+            let cc_path_buf = PathBuf::from(&cc_path);
+            if let Some(cc_dir) = cc_path_buf.parent() {
+                if env::var_os("LIBCLANG_PATH").is_none() {
+                    env::set_var("LIBCLANG_PATH", cc_dir);
+                }
+                // bindgen also consults CLANG_PATH and expects an executable path.
+                env::set_var("CLANG_PATH", &cc_path);
+            }
+        }
+    }
+
     let sdk_include_path = sdk_include_path();
 
     let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
@@ -104,6 +124,54 @@ fn generate_lwip_bindings() {
     if arch == "aarch64" && os == "ios" {
         // https://github.com/rust-lang/rust-bindgen/issues/1211
         builder = builder.clang_arg("--target=arm64-apple-ios");
+    }
+    if os == "android" {
+        // Pass Android target/sysroot information so libclang can resolve
+        // standard headers like stddef.h while cross-compiling.
+        if !target.is_empty() {
+            let cflags_env_dash = format!("CFLAGS_{target}");
+            let cflags_env_us = format!("CFLAGS_{}", target.replace('-', "_"));
+            if let Ok(cflags) = env::var(&cflags_env_dash) {
+                for arg in cflags.split_whitespace() {
+                    builder = builder.clang_arg(arg);
+                }
+            }
+            if let Ok(cflags) = env::var(&cflags_env_us) {
+                for arg in cflags.split_whitespace() {
+                    builder = builder.clang_arg(arg);
+                }
+            }
+            if let Ok(cc_path) = env::var(&android_cc_env) {
+                if let Some(prebuilt_root) = Path::new(&cc_path).parent().and_then(|p| p.parent()) {
+                    let sysroot = prebuilt_root.join("sysroot");
+                    let target_no_api = target
+                        .chars()
+                        .take_while(|c| !c.is_ascii_digit())
+                        .collect::<String>();
+                    builder = builder
+                        .clang_arg(format!("--sysroot={}", sysroot.display()))
+                        .clang_arg(format!("-I{}/usr/include", sysroot.display()));
+                    if !target_no_api.is_empty() {
+                        builder = builder.clang_arg(format!(
+                            "-I{}/usr/include/{}",
+                            sysroot.display(),
+                            target_no_api
+                        ));
+                    }
+                    let clang_lib_dir = prebuilt_root.join("lib").join("clang");
+                    if let Ok(entries) = fs::read_dir(&clang_lib_dir) {
+                        for entry in entries.flatten() {
+                            let clang_include = entry.path().join("include");
+                            if clang_include.exists() {
+                                builder = builder
+                                    .clang_arg("-isystem")
+                                    .clang_arg(clang_include.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
     if let Some(sdk_include_path) = sdk_include_path {
         builder = builder.clang_arg(format!("-I{}", sdk_include_path));
