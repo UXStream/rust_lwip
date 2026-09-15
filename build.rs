@@ -19,12 +19,20 @@ fn sdk_include_path_for(sdk: &str) -> String {
     inc_path.to_str().expect("invalid include path").to_string()
 }
 
+fn is_ios_simulator() -> bool {
+    // The x86_64 iOS target is simulator-only. On aarch64, device and simulator
+    // share an arch and are distinguished by the `-sim` ABI suffix in the target
+    // triple (`aarch64-apple-ios-sim`), surfaced here as CARGO_CFG_TARGET_ABI="sim".
+    let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let abi = env::var("CARGO_CFG_TARGET_ABI").unwrap_or_default();
+    arch == "x86_64" || abi == "sim"
+}
+
 fn sdk_include_path() -> Option<String> {
     let os = env::var("CARGO_CFG_TARGET_OS").unwrap();
-    let arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
     match os.as_str() {
         "ios" => {
-            if arch == "x86_64" {
+            if is_ios_simulator() {
                 Some(sdk_include_path_for("iphonesimulator"))
             } else {
                 Some(sdk_include_path_for("iphoneos"))
@@ -123,7 +131,12 @@ fn generate_lwip_bindings() {
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
     if arch == "aarch64" && os == "ios" {
         // https://github.com/rust-lang/rust-bindgen/issues/1211
-        builder = builder.clang_arg("--target=arm64-apple-ios");
+        let clang_target = if is_ios_simulator() {
+            "arm64-apple-ios-simulator"
+        } else {
+            "arm64-apple-ios"
+        };
+        builder = builder.clang_arg(format!("--target={clang_target}"));
     }
     if os == "android" {
         // Pass Android target/sysroot information so libclang can resolve
